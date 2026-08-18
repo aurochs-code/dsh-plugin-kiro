@@ -1,0 +1,4 @@
+# Mount the Kiro ACP provider when the package is installed into a DSH profile.
+- insert:
+    - id: llm-kiro
+      name: dsh-plugin-kiro

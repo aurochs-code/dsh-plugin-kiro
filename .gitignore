@@ -1,0 +1,5 @@
+lib/
+lib-test/
+node_modules/
+*.log
+.DS_Store
