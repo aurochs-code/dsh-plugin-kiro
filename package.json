@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-kiro",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Use a local Kiro CLI session or enterprise API key as a DeepSeek Harness LLM provider via ACP",
   "license": "MIT",
   "repository": {

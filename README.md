@@ -30,6 +30,8 @@ dsh plugin --profile web add github:aurochs-code/dsh-plugin-kiro
 
 本插件已将运行所需的 JavaScript 文件随 Git 仓库提交，安装不需要为它在 pnpm 的 `allowBuilds` 中增加白名单。
 
+Kiro CLI 2.x 使用 ACP 的 `prompt` 字段；插件已兼容该字段，也会对明确拒绝它的旧版 ACP 服务回退到 `content`。
+
 无浏览器/CI 场景，先让企业管理员允许 API Key，再由安全的密钥管理机制提供环境变量：
 
 ```sh

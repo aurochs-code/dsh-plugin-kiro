@@ -19,6 +19,7 @@ if (args[0] !== 'acp') process.exit(2)
 
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)
 const requirePromptField = process.env.FAKE_ACP_REQUIRES_PROMPT === '1'
+const requireContentField = process.env.FAKE_ACP_REQUIRES_CONTENT === '1'
 const input = createInterface({ input: process.stdin })
 input.on('line', (line) => {
   const request = JSON.parse(line)
@@ -35,8 +36,12 @@ input.on('line', (line) => {
     return
   }
   if (request.method === 'session/prompt') {
-    if (requirePromptField && request.params.content !== undefined) {
+    if (requirePromptField && request.params.prompt === undefined) {
       send({ jsonrpc: '2.0', id: request.id, error: { code: -32602, message: 'Invalid params: prompt required' } })
+      return
+    }
+    if (requireContentField && request.params.content === undefined) {
+      send({ jsonrpc: '2.0', id: request.id, error: { code: -32602, message: 'Invalid params: content required' } })
       return
     }
     send({

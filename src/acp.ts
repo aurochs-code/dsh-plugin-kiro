@@ -169,7 +169,7 @@ export class KiroAcpClient {
     await this.request('initialize', {
       protocolVersion: 1,
       clientCapabilities: {},
-      clientInfo: { name: 'dsh-plugin-kiro', version: '0.1.0' },
+      clientInfo: { name: 'dsh-plugin-kiro', version: '0.1.2' },
     }, signal)
   }
 
@@ -193,14 +193,14 @@ export class KiroAcpClient {
     let finished = false
     const complete = async (): Promise<void> => {
       try {
-        // Kiro documents `content`; ACP's newer schema calls the same field
-        // `prompt`. Try the Kiro form first, then safely retry only invalid
-        // parameter errors for compatible CLI versions.
+        // Current Kiro CLI releases require `prompt`. Some older ACP agents
+        // use the documented `content` spelling, so retry only when they
+        // explicitly reject the current form.
         try {
-          await this.request('session/prompt', { sessionId, content: [{ type: 'text', text }] }, signal)
+          await this.request('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }, signal)
         } catch (error) {
           if (!(error instanceof AcpRpcError) || (error.code !== -32602 && !/invalid params/i.test(error.message))) throw error
-          await this.request('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }, signal)
+          await this.request('session/prompt', { sessionId, content: [{ type: 'text', text }] }, signal)
         }
         finished = true
         queue.end()

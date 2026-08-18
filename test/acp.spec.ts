@@ -23,11 +23,24 @@ test('streams Kiro ACP text chunks', async () => {
   }
 })
 
-test('falls back to the current ACP prompt field spelling', async () => {
+test('uses the prompt field required by current Kiro CLI releases', async () => {
   const client = new KiroAcpClient({
     command: fixture,
     cwd: process.cwd(),
     env: { ...process.env, FAKE_ACP_REQUIRES_PROMPT: '1' },
+  })
+  try {
+    assert.equal(await completePrompt(client), 'Hello Kiro')
+  } finally {
+    client.close()
+  }
+})
+
+test('falls back to the content field used by older ACP agents', async () => {
+  const client = new KiroAcpClient({
+    command: fixture,
+    cwd: process.cwd(),
+    env: { ...process.env, FAKE_ACP_REQUIRES_CONTENT: '1' },
   })
   try {
     assert.equal(await completePrompt(client), 'Hello Kiro')
