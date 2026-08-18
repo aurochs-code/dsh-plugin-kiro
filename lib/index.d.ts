@@ -6,6 +6,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 import type { KiroModelEntry } from './adapter.js';
+import type { KiroReasoningEffort } from './effort.js';
 export declare const name = "dsh-plugin-kiro";
 export declare const inject: string[];
 /** Plugin configuration. Secrets are always supplied through the environment, never this object. */
@@ -18,6 +19,8 @@ export interface Config {
     apiKeyEnv?: string;
     /** Static fallback model catalog when CLI discovery is unavailable. */
     models?: KiroModelEntry[];
+    /** Applied only when a conversation does not choose a reasoning effort. */
+    defaultEffort?: KiroReasoningEffort;
 }
 export declare const Config: z<Config>;
 /** Register the Kiro adapter. Authentication remains in the local Kiro CLI or environment. */

@@ -2,14 +2,14 @@
 
 将本机已认证的 [Kiro CLI](https://kiro.dev/docs/cli/acp/) 作为 DeepSeek Harness（DSH）的 `kiro` LLM provider 使用。插件只使用 Kiro 官方的 Agent Client Protocol（ACP）；不复制企业 SSO 凭据，也不调用未公开的 Kiro HTTP 接口。
 
-> 当前为 0.1 版本：已支持文本、多轮 DSH 历史、模型发现和流式输出；图片、DSH 工具映射与 Kiro 会话复用尚未实现。
+> 当前为 0.2 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择和 Web 配置卡；图片、DSH 工具映射与 Kiro 会话复用尚未实现。
 
 ## 适用场景
 
 - Kiro 企业用户通过 AWS IAM Identity Center、Okta 或 Microsoft Entra ID 登录 Kiro CLI。
 - 管理员已允许 API Key 时，在非交互式机器上使用 `KIRO_API_KEY`。
 
-企业管理员默认可禁止 API Key 生成；该开关和 Kiro 的模型白名单仍由 Kiro Console 管理。插件会调用 `kiro-cli whoami` 和 `kiro-cli chat --list-models --format json`，因此只会展示该用户实际可用的模型。
+企业管理员默认可禁止 API Key 生成；该开关和 Kiro 的模型白名单仍由 Kiro Console 管理。插件会调用 `kiro-cli whoami` 和 `kiro-cli chat --list-models --format json`，因此只会展示该用户实际可用的模型。模型目录会在 DSH 进程内缓存 5 分钟，并会合并同时发生的加载请求，避免每次打开选择器都重复启动 Kiro CLI。
 
 ## 安装
 
@@ -57,12 +57,27 @@ export KIRO_API_KEY='…'
   config:
     command: /usr/local/bin/kiro-cli  # 默认 kiro-cli
     cwd: /absolute/path/to/workspace  # 默认 DSH 进程当前目录
-    apiKeyEnv: KIRO_API_KEY           # 不会读取或保存密钥以外的配置值
+    apiKeyEnv: KIRO_API_KEY           # 只保存变量名，不会读取或保存密钥值
+    defaultEffort: high                # 可选：low / medium / high / xhigh / max
     models:                           # CLI 目录故障时的显示兜底
       - { id: auto, name: Auto }
 ```
 
 `models` 只是在模型发现失败时提供 UI 目录；实际请求仍由 Kiro CLI 和企业模型治理决定。
+
+### Web 配置页
+
+安装 Web profile 后，打开 **设置 → 插件 → 插件配置 → Kiro ACP**。该卡片可修改：
+
+- Kiro CLI 命令、ACP 工作目录和 API Key 环境变量名；
+- 默认推理强度；
+- 已覆盖的字段可单独重置回 profile 配置。
+
+保存后配置会应用到新的请求；对话中手动选择的推理强度优先于默认值。每次 ACP 请求都会以对应的 `kiro-cli acp --effort <level>` 启动。
+
+### Kiro 额度
+
+Kiro CLI 的交互式 `/usage` 会显示用量/订阅入口，但当前公开的 CLI 和 ACP 协议没有提供可由插件稳定读取的“剩余额度”数值。因此配置卡会明确显示这一限制并链接到 [Kiro 的订阅说明](https://kiro.dev/docs/cli/billing/subscription-portal/)；请在 Kiro CLI 中输入 `/usage` 查看实时额度，而不要依赖插件猜测或抓取私有接口。
 
 ## 安全与边界
 
@@ -78,7 +93,7 @@ pnpm install
 pnpm check
 ```
 
-测试使用本地模拟 Kiro CLI，覆盖 ACP 初始化、模型选择、流式响应、ACP 参数兼容、DSH 流转换和图片拒绝行为。发布前仍建议使用一个管理员批准的企业测试账户做端到端验证。
+测试使用本地模拟 Kiro CLI，覆盖 ACP 初始化、模型选择、流式响应、ACP 参数兼容、推理强度透传、模型目录缓存/并发合并、DSH 流转换和图片拒绝行为。发布前仍建议使用一个管理员批准的企业测试账户做端到端验证。
 
 ## License
 

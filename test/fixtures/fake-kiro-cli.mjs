@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline'
+import { appendFileSync } from 'node:fs'
 
 const args = process.argv.slice(2)
 
@@ -9,6 +10,7 @@ if (args[0] === 'whoami') {
 }
 
 if (args[0] === 'chat' && args.includes('--list-models')) {
+  if (process.env.FAKE_KIRO_MODELS_LOG !== undefined) appendFileSync(process.env.FAKE_KIRO_MODELS_LOG, 'models\n')
   process.stdout.write(`${JSON.stringify({ models: [
     { id: 'kiro-test', displayName: 'Kiro Test', description: 'Fixture model' },
   ] })}\n`)
@@ -16,6 +18,8 @@ if (args[0] === 'chat' && args.includes('--list-models')) {
 }
 
 if (args[0] !== 'acp') process.exit(2)
+
+if (process.env.FAKE_ACP_ARGS_LOG !== undefined) appendFileSync(process.env.FAKE_ACP_ARGS_LOG, `${args.join(' ')}\n`)
 
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)
 const requirePromptField = process.env.FAKE_ACP_REQUIRES_PROMPT === '1'
