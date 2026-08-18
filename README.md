@@ -28,6 +28,8 @@ dsh plugin --profile web add github:aurochs-code/dsh-plugin-kiro
 
 安装后重启 `dsh web`，在模型选择器中选择 **Kiro (ACP)** 下的模型。
 
+本插件已将运行所需的 JavaScript 文件随 Git 仓库提交，安装不需要为它在 pnpm 的 `allowBuilds` 中增加白名单。
+
 无浏览器/CI 场景，先让企业管理员允许 API Key，再由安全的密钥管理机制提供环境变量：
 
 ```sh
