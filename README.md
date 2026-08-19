@@ -2,7 +2,7 @@
 
 将本机已认证的 [Kiro CLI](https://kiro.dev/docs/cli/acp/) 作为 DeepSeek Harness（DSH）的 `kiro` LLM provider 使用。插件只使用 Kiro 官方的 Agent Client Protocol（ACP）；不复制企业 SSO 凭据，也不调用未公开的 Kiro HTTP 接口。
 
-> 当前为 0.2.2 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择和 Web 配置卡；图片、DSH 工具映射与 Kiro 会话复用尚未实现。
+> 当前为 0.2.3 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择和 Web 配置卡；图片、DSH 工具映射与 Kiro 会话复用尚未实现。
 
 ## 适用场景
 
