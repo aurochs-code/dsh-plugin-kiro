@@ -2,7 +2,7 @@
 
 将本机已认证的 [Kiro CLI](https://kiro.dev/docs/cli/acp/) 作为 DeepSeek Harness（DSH）的 `kiro` LLM provider 使用。插件只使用 Kiro 官方的 Agent Client Protocol（ACP）；不复制企业 SSO 凭据，也不调用未公开的 Kiro HTTP 接口。
 
-> 当前为 0.2 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择和 Web 配置卡；图片、DSH 工具映射与 Kiro 会话复用尚未实现。
+> 当前为 0.2.1 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择和 Web 配置卡；图片、DSH 工具映射与 Kiro 会话复用尚未实现。
 
 ## 适用场景
 
@@ -82,8 +82,8 @@ Kiro CLI 的交互式 `/usage` 会显示用量/订阅入口，但当前公开的
 ## 安全与边界
 
 - 插件不保存 Kiro API Key、IAM Identity Center token 或外部 IdP token。
-- ACP client 不声明文件系统、终端或 MCP 能力；Kiro 若仍发起工具调用，当前请求会失败，而不会由插件代为执行。
-- 每次 DSH 请求都会创建一个新的 Kiro ACP session，并将 DSH 会话历史序列化为一个文本提示。Kiro CLI 自己的会话落盘策略仍由 Kiro 控制。
+- ACP client 不声明 DSH 的文件系统、终端或 MCP 能力。Kiro 发出的 `ToolCall` / `ToolCallUpdate` 是 ACP 状态通知，插件会等待最终文本；插件不会映射或代为执行 DSH 工具，Kiro 自身工具仍受其 CLI 配置和权限控制。
+- 每次 DSH 请求都会创建一个新的 Kiro ACP session，并将 DSH 会话历史作为结构化 JSON 文本传入，避免内容中的角色标签伪装成新的指令。Kiro CLI 自己的会话落盘策略仍由 Kiro 控制。
 - 当前仅支持文本输入和文本输出。带图片的请求会明确报 `UNSUPPORTED`，不会静默丢弃。
 
 ## 开发与验证

@@ -48,3 +48,16 @@ test('falls back to the content field used by older ACP agents', async () => {
     client.close()
   }
 })
+
+test('ignores Kiro tool status updates while waiting for the final text', async () => {
+  const client = new KiroAcpClient({
+    command: fixture,
+    cwd: process.cwd(),
+    env: { ...process.env, FAKE_ACP_TOOL_UPDATE: '1' },
+  })
+  try {
+    assert.equal(await completePrompt(client), 'Hello Kiro')
+  } finally {
+    client.close()
+  }
+})
