@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-kiro",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Use a local Kiro CLI session or enterprise API key as a DeepSeek Harness LLM provider via ACP",
   "license": "MIT",
   "repository": {
@@ -23,6 +23,10 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": {
+      "types": "./lib/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -34,10 +38,19 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-client-locale"
+      ]
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsdown",
     "test": "tsc -p tsconfig.test.json && node --test lib-test/test/*.spec.js",
     "check": "pnpm build && pnpm test",
     "prepublishOnly": "pnpm check"
@@ -45,13 +58,23 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.7",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.7",
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-locale": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.7",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.7",
+    "@deepseek-ai/dsh-settings": "0.1.0-rc.7",
     "@deepseek-ai/schemastery": "^3.18.1",
     "@types/node": "^24.0.0",
+    "@types/react": "^18.3.1",
+    "react": "^18.2.0",
+    "tsdown": "^0.15.0",
     "typescript": "^5.8.3"
   },
   "engines": {
