@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -62,6 +62,38 @@ test('caches and coalesces Kiro model discovery', async () => {
     if (original === undefined) delete process.env.FAKE_KIRO_MODELS_LOG
     else process.env.FAKE_KIRO_MODELS_LOG = original
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('uses the DSH session workspace when ACP cwd is not configured', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'dsh-plugin-kiro-workspace-'))
+  const log = join(workspace, 'acp-cwd.log')
+  const original = process.env.FAKE_ACP_CWD_LOG
+  process.env.FAKE_ACP_CWD_LOG = log
+  try {
+    const adapter = new KiroAdapter({
+      command: fixture,
+      apiKeyEnv: 'KIRO_API_KEY',
+      models: [],
+      resolveSessionCwd: sessionId => sessionId === 'workspace-session' ? workspace : undefined,
+    })
+    const messages = [createUserMessage({
+      content: [{ type: 'text', text: 'Hello' }],
+      source: { kind: 'user' },
+    })]
+    for await (const _chunk of adapter.stream({
+      provider: 'kiro',
+      model: 'kiro-test',
+      messages,
+      sessionId: 'workspace-session' as never,
+    })) {
+      // Consume the fixture stream so the ACP request completes.
+    }
+    assert.equal((await readFile(log, 'utf8')).trim(), await realpath(workspace))
+  } finally {
+    if (original === undefined) delete process.env.FAKE_ACP_CWD_LOG
+    else process.env.FAKE_ACP_CWD_LOG = original
+    await rm(workspace, { recursive: true, force: true })
   }
 })
 

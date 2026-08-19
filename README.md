@@ -2,7 +2,7 @@
 
 将本机已认证的 [Kiro CLI](https://kiro.dev/docs/cli/acp/) 作为 DeepSeek Harness（DSH）的 `kiro` LLM provider 使用。插件只使用 Kiro 官方的 Agent Client Protocol（ACP）；不复制企业 SSO 凭据，也不调用未公开的 Kiro HTTP 接口。
 
-> 当前为 0.2.1 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择和 Web 配置卡；图片、DSH 工具映射与 Kiro 会话复用尚未实现。
+> 当前为 0.2.2 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择和 Web 配置卡；图片、DSH 工具映射与 Kiro 会话复用尚未实现。
 
 ## 适用场景
 
@@ -56,7 +56,7 @@ export KIRO_API_KEY='…'
   name: dsh-plugin-kiro
   config:
     command: /usr/local/bin/kiro-cli  # 默认 kiro-cli
-    cwd: /absolute/path/to/workspace  # 默认 DSH 进程当前目录
+    cwd: /absolute/path/to/workspace  # 可选；未填写时使用当前 DSH 对话的项目目录
     apiKeyEnv: KIRO_API_KEY           # 只保存变量名，不会读取或保存密钥值
     defaultEffort: high                # 可选：low / medium / high / xhigh / max
     models:                           # CLI 目录故障时的显示兜底
@@ -69,7 +69,7 @@ export KIRO_API_KEY='…'
 
 安装 Web profile 后，打开 **设置 → 插件 → 插件配置 → Kiro ACP**。该卡片可修改：
 
-- Kiro CLI 命令、ACP 工作目录和 API Key 环境变量名；
+- Kiro CLI 命令、可选的 ACP 工作目录和 API Key 环境变量名；留空时自动使用当前 DSH 对话的项目目录；
 - 默认推理强度；
 - 已覆盖的字段可单独重置回 profile 配置。
 

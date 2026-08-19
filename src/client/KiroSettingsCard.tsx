@@ -247,7 +247,7 @@ function KiroSettingsCardBody({ scope, t }: KiroSettingsCardInjected): JSX.Eleme
   if (snapshot.status === 'unavailable') return null
 
   const overrides = Object.fromEntries(FIELDS.map(field => [field, hasField(snapshot.user, field)])) as Record<DraftField, boolean>
-  const invalid = draft.command.trim().length === 0 || draft.cwd.trim().length === 0 || draft.apiKeyEnv.trim().length === 0
+  const invalid = draft.command.trim().length === 0 || draft.apiKeyEnv.trim().length === 0
   const dirty = resets.size > 0 || !sameDraft(draft, baseline)
   const disabled = snapshot.status !== 'ready' || !snapshot.writable || saving
 
@@ -281,7 +281,7 @@ function KiroSettingsCardBody({ scope, t }: KiroSettingsCardInjected): JSX.Eleme
     setFailed(false)
     try {
       for (const field of FIELDS) {
-        if (resets.has(field) || (field === 'defaultEffort' && draft[field] === '')) {
+        if (resets.has(field) || ((field === 'cwd' || field === 'defaultEffort') && draft[field] === '')) {
           await scope.unset(field)
         } else if (draft[field] !== baseline[field]) {
           await scope.set(field, draft[field].trim())
@@ -319,7 +319,7 @@ function KiroSettingsCardBody({ scope, t }: KiroSettingsCardInjected): JSX.Eleme
         <div style={styles.body}>
           {!snapshot.writable ? <p style={styles.hint}>{t('readOnly')}</p> : null}
           <Field field="command" label={t('command')} hint={t('commandHint')} value={draft.command} override={overrides.command} invalid={draft.command.trim().length === 0} disabled={disabled} t={t} onChange={value => edit('command', value)} onReset={() => reset('command')} />
-          <Field field="cwd" label={t('cwd')} hint={t('cwdHint')} value={draft.cwd} override={overrides.cwd} invalid={draft.cwd.trim().length === 0} disabled={disabled} t={t} onChange={value => edit('cwd', value)} onReset={() => reset('cwd')} />
+          <Field field="cwd" label={t('cwd')} hint={t('cwdHint')} value={draft.cwd} override={overrides.cwd} invalid={false} disabled={disabled} t={t} onChange={value => edit('cwd', value)} onReset={() => reset('cwd')} />
           <Field field="apiKeyEnv" label={t('apiKeyEnv')} hint={t('apiKeyEnvHint')} value={draft.apiKeyEnv} override={overrides.apiKeyEnv} invalid={draft.apiKeyEnv.trim().length === 0} disabled={disabled} t={t} onChange={value => edit('apiKeyEnv', value)} onReset={() => reset('apiKeyEnv')} />
           <Field field="defaultEffort" label={t('defaultEffort')} hint={t('defaultEffortHint')} value={draft.defaultEffort} override={overrides.defaultEffort} invalid={false} disabled={disabled} isSelect t={t} onChange={value => edit('defaultEffort', value)} onReset={() => reset('defaultEffort')} />
           <div style={styles.callout}>
