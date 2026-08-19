@@ -155,6 +155,13 @@ export class KiroAdapter extends LlmAdapter {
     this.sessions.clear()
   }
 
+  /** Forget the current user's model list after a completed Kiro sign-in. */
+  invalidateModelCatalog(): void {
+    this.discovered = new Map()
+    this.modelCache = undefined
+    this.modelDiscovery = undefined
+  }
+
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const command = this.command
     const cwd = this.configuredCwd ?? this.options.resolveSessionCwd?.(options.sessionId) ?? command.cwd

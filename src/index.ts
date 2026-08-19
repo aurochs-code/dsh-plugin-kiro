@@ -11,13 +11,34 @@ import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-sett
 import type {} from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 import { KiroAdapter } from './adapter.js'
+import { createKiroAuthenticationRpcHandler, KiroAuthenticationService } from './auth.js'
+import type { KiroAuthenticationRpcResult } from './auth.js'
 import { createDshToolHandlers } from './dsh-bridge.js'
 import type { KiroAdapterConfig, KiroModelEntry } from './adapter.js'
+import type { KiroCliOptions } from './cli.js'
 import type { KiroReasoningEffort } from './effort.js'
 
 export const name = 'dsh-plugin-kiro'
-export const inject = ['llm', 'sessions', 'agents', 'tools']
+export const inject = ['llm', 'sessions', 'agents', 'tools', 'connection']
 const settingsNamespaceId = settingsNamespace('kiro')
+
+type KiroAuthenticationRpcHandler = (
+  endpoint: string,
+  payload: unknown,
+  signal: AbortSignal,
+) => Promise<KiroAuthenticationRpcResult>
+
+interface KiroHostContext extends Context {
+  connection: {
+    rpc: {
+      handle(
+        channel: string,
+        handler: KiroAuthenticationRpcHandler,
+        options: { authority: 'loopback' },
+      ): () => Promise<void>
+    }
+  }
+}
 
 /** Plugin configuration. Secrets are always supplied through the environment, never this object. */
 export interface Config {
@@ -65,8 +86,16 @@ function adapterConfig(config: Config): KiroAdapterConfig {
   }
 }
 
-/** Register the Kiro adapter. Authentication remains in the local Kiro CLI or environment. */
-export function apply(ctx: Context, config: Config): void {
+function authenticationCommand(config: Config): KiroCliOptions {
+  return {
+    command: config.command ?? 'kiro-cli',
+    cwd: configuredCwd(config) ?? process.cwd(),
+    apiKeyEnv: config.apiKeyEnv ?? 'KIRO_API_KEY',
+  }
+}
+
+/** Register the Kiro adapter and its loopback-only Kiro CLI authentication bridge. */
+export function apply(ctx: KiroHostContext, config: Config): void {
   const cwd = configuredCwd(config)
   const base: Config = {
     command: config.command ?? 'kiro-cli',
@@ -84,6 +113,18 @@ export function apply(ctx: Context, config: Config): void {
   })
   ctx.effect(() => () => adapter.close(), 'Kiro ACP sessions')
   const registration = ctx.llm.registerAdapter(['kiro'], adapter)
+  const authentication = new KiroAuthenticationService({
+    resolveCommand: () => authenticationCommand(source()),
+    onAuthenticated: () => {
+      adapter.invalidateModelCatalog()
+      registration.replace(['kiro'])
+    },
+  })
+  ctx.effect(() => () => authentication.close(), 'Kiro authentication')
+  ctx.effect(
+    () => ctx.connection.rpc.handle('/kiro-auth', createKiroAuthenticationRpcHandler(authentication), { authority: 'loopback' }),
+    'Kiro authentication RPC',
+  )
   installSettingsSection(ctx, settingsNamespaceId, Config, base, {
     setSource(next) {
       source = next

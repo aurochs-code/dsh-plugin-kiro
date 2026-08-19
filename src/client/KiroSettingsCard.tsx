@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties } from 'react'
 import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
+import type { KiroAuthenticationClient } from './kiro-auth.js'
+import type { KiroAuthenticationStatus } from '../auth.js'
 import { KIRO_REASONING_EFFORTS } from '../effort.js'
 import type { Config as KiroConfig } from '../index.js'
 import type { KiroSettingsKey } from './locales.js'
@@ -15,6 +17,8 @@ const QUOTA_HELP_URL = 'https://kiro.dev/docs/cli/billing/subscription-portal/'
 export interface KiroSettingsCardInjected {
   scope: SettingsScope<KiroSettings>
   t: (key: KiroSettingsKey) => string
+  authentication: KiroAuthenticationClient
+  canManageAuthentication: boolean
 }
 
 export type KiroSettingsCardProps = Partial<KiroSettingsCardInjected>
@@ -169,6 +173,31 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     lineHeight: 1.5,
   },
+  authStatus: {
+    margin: 0,
+    color: 'var(--dsw-alias-label-secondary)',
+    fontSize: 12,
+    lineHeight: 1.5,
+  },
+  authIdentity: {
+    margin: 0,
+    color: 'var(--dsw-alias-label-tertiary)',
+    fontSize: 12,
+    lineHeight: 1.5,
+  },
+  authActions: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 },
+  authCode: {
+    display: 'inline-flex',
+    alignSelf: 'flex-start',
+    border: '1px solid var(--dsw-alias-border-l2)',
+    borderRadius: 8,
+    padding: '5px 8px',
+    background: 'var(--dsw-alias-bg-layer-3)',
+    color: 'var(--dsw-alias-label-primary)',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 13,
+    letterSpacing: '0.06em',
+  },
 }
 
 function useSettingsSnapshot(scope: SettingsScope<KiroSettings>): SettingsScopeSnapshot<KiroSettings> {
@@ -226,7 +255,90 @@ function Field(props: {
   )
 }
 
-function KiroSettingsCardBody({ scope, t }: KiroSettingsCardInjected): JSX.Element | null {
+function authenticationLabel(status: KiroAuthenticationStatus | undefined, t: KiroSettingsCardInjected['t']): string {
+  if (status === undefined) return t('authLoading')
+  if (status.login.state === 'waiting') return t('authWaiting')
+  if (status.state === 'authenticated') return t('authConnected')
+  if (status.login.state === 'complete') return t('authComplete')
+  if (status.login.state === 'failed') return t('authFailed')
+  if (status.login.state === 'cancelled') return t('authCancelled')
+  if (status.login.state === 'expired') return t('authExpired')
+  if (status.state === 'signed-out') return t('authSignedOut')
+  return t('authUnavailable')
+}
+
+function KiroAuthenticationPanel(props: {
+  authentication: KiroAuthenticationClient
+  available: boolean
+  disabled: boolean
+  t: KiroSettingsCardInjected['t']
+}): JSX.Element {
+  const [status, setStatus] = useState<KiroAuthenticationStatus | undefined>()
+  const [loading, setLoading] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  const request = useCallback(async (action: 'status' | 'enterprise-login' | 'cancel-login'): Promise<void> => {
+    setLoading(true)
+    setFailed(false)
+    try {
+      const next = action === 'status'
+        ? await props.authentication.status()
+        : action === 'enterprise-login'
+          ? await props.authentication.startEnterpriseLogin()
+          : await props.authentication.cancelLogin()
+      setStatus(next)
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [props.authentication])
+
+  useEffect(() => {
+    if (!props.available) return
+    void request('status')
+  }, [props.available, request])
+
+  const waiting = status?.login.state === 'waiting'
+  useEffect(() => {
+    if (!props.available || !waiting) return
+    const timer = window.setInterval(() => { void request('status') }, 1_500)
+    return () => window.clearInterval(timer)
+  }, [props.available, request, waiting])
+
+  const identity = [status?.identity?.email, status?.identity?.accountType].filter((value): value is string => value !== undefined).join(' · ')
+  const canStart = props.available && !props.disabled && !loading && !waiting
+  const device = status?.login
+  return (
+    <div style={styles.callout}>
+      <span style={styles.calloutTitle}>{props.t('authTitle')}</span>
+      <p style={styles.hint}>{props.t('authBody')}</p>
+      {props.available ? <p role="status" style={styles.authStatus}>{authenticationLabel(status, props.t)}</p> : <p style={styles.authStatus}>{props.t('authLocalOnly')}</p>}
+      {identity.length > 0 ? <p style={styles.authIdentity}>{identity}</p> : null}
+      {props.available && waiting ? (
+        <>
+          {device?.code === undefined ? <p style={styles.hint}>{props.t('authPreparing')}</p> : <code style={styles.authCode}>{device.code}</code>}
+          {device?.url === undefined ? null : <a style={styles.link} href={device.url} target="_blank" rel="noreferrer">{props.t('authOpenBrowser')}</a>}
+          <p style={styles.hint}>{props.t('authDeviceHint')}</p>
+        </>
+      ) : null}
+      {props.available && props.disabled ? <p style={styles.hint}>{props.t('authSaveFirst')}</p> : null}
+      {failed ? <p role="status" style={styles.failure}>{props.t('authRequestFailed')}</p> : null}
+      {props.available ? <div style={styles.authActions}>
+        {waiting ? (
+          <button type="button" style={styles.button} disabled={loading} onClick={() => { void request('cancel-login') }}>{props.t('authCancel')}</button>
+        ) : (
+          <button type="button" style={styles.save} disabled={!canStart} onClick={() => { void request('enterprise-login') }}>
+            {status?.state === 'authenticated' ? props.t('authRelogin') : props.t('authEnterpriseLogin')}
+          </button>
+        )}
+        <button type="button" style={styles.button} disabled={loading} onClick={() => { void request('status') }}>{props.t('authRefresh')}</button>
+      </div> : null}
+    </div>
+  )
+}
+
+function KiroSettingsCardBody({ scope, t, authentication, canManageAuthentication }: KiroSettingsCardInjected): JSX.Element | null {
   const snapshot = useSettingsSnapshot(scope)
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<Draft>(() => toDraft(undefined))
@@ -322,6 +434,7 @@ function KiroSettingsCardBody({ scope, t }: KiroSettingsCardInjected): JSX.Eleme
           <Field field="cwd" label={t('cwd')} hint={t('cwdHint')} value={draft.cwd} override={overrides.cwd} invalid={false} disabled={disabled} t={t} onChange={value => edit('cwd', value)} onReset={() => reset('cwd')} />
           <Field field="apiKeyEnv" label={t('apiKeyEnv')} hint={t('apiKeyEnvHint')} value={draft.apiKeyEnv} override={overrides.apiKeyEnv} invalid={draft.apiKeyEnv.trim().length === 0} disabled={disabled} t={t} onChange={value => edit('apiKeyEnv', value)} onReset={() => reset('apiKeyEnv')} />
           <Field field="defaultEffort" label={t('defaultEffort')} hint={t('defaultEffortHint')} value={draft.defaultEffort} override={overrides.defaultEffort} invalid={false} disabled={disabled} isSelect t={t} onChange={value => edit('defaultEffort', value)} onReset={() => reset('defaultEffort')} />
+          <KiroAuthenticationPanel authentication={authentication} available={canManageAuthentication} disabled={dirty || snapshot.status !== 'ready'} t={t} />
           <div style={styles.callout}>
             <span style={styles.calloutTitle}>{t('cacheTitle')}</span>
             <p style={styles.hint}>{t('cacheBody')}</p>
@@ -343,6 +456,6 @@ function KiroSettingsCardBody({ scope, t }: KiroSettingsCardInjected): JSX.Eleme
 }
 
 export function KiroSettingsCard(props: KiroSettingsCardProps): JSX.Element | null {
-  if (props.scope === undefined || props.t === undefined) return null
-  return <KiroSettingsCardBody scope={props.scope} t={props.t} />
+  if (props.scope === undefined || props.t === undefined || props.authentication === undefined || props.canManageAuthentication === undefined) return null
+  return <KiroSettingsCardBody scope={props.scope} t={props.t} authentication={props.authentication} canManageAuthentication={props.canManageAuthentication} />
 }

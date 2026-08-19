@@ -6,6 +6,14 @@ test('registers the Kiro ACP card in the plugin configuration slot', () => {
   const scope = {}
   const registrations: { name: string; value: unknown }[] = []
   let localeNamespace = ''
+  const connection = {
+    isLoopback: true,
+    rpc: {
+      async call(): Promise<{ ok: true; value: unknown }> {
+        return { ok: true, value: { state: 'signed-out', login: { state: 'idle' } } }
+      },
+    },
+  }
   const ctx = {
     effect(callback: () => unknown): void {
       callback()
@@ -23,6 +31,7 @@ test('registers the Kiro ACP card in the plugin configuration slot', () => {
         return scope
       },
     },
+    connection,
     slots: {
       inject(name: string, factory: () => unknown): void {
         registrations.push({ name, value: factory() })
@@ -38,8 +47,12 @@ test('registers the Kiro ACP card in the plugin configuration slot', () => {
   assert.equal(localeNamespace, 'settings.kiro')
   assert.equal(registrations.length, 1)
   assert.equal(registrations[0]?.name, 'settings.plugin.item')
-  const registration = registrations[0]?.value as { options: { key: string; locale: string; inject: () => { scope: unknown } } }
+  const registration = registrations[0]?.value as {
+    options: { key: string; locale: string; inject: () => { scope: unknown; canManageAuthentication: boolean; authentication: { status: () => Promise<unknown> } } }
+  }
   assert.equal(registration.options.key, 'kiro')
   assert.equal(registration.options.locale, 'settings.kiro')
   assert.equal(registration.options.inject().scope, scope)
+  assert.equal(registration.options.inject().canManageAuthentication, true)
+  assert.equal(typeof registration.options.inject().authentication.status, 'function')
 })

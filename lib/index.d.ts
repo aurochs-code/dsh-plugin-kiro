@@ -5,10 +5,21 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import type { KiroAuthenticationRpcResult } from './auth.js';
 import type { KiroModelEntry } from './adapter.js';
 import type { KiroReasoningEffort } from './effort.js';
 export declare const name = "dsh-plugin-kiro";
 export declare const inject: string[];
+type KiroAuthenticationRpcHandler = (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<KiroAuthenticationRpcResult>;
+interface KiroHostContext extends Context {
+    connection: {
+        rpc: {
+            handle(channel: string, handler: KiroAuthenticationRpcHandler, options: {
+                authority: 'loopback';
+            }): () => Promise<void>;
+        };
+    };
+}
 /** Plugin configuration. Secrets are always supplied through the environment, never this object. */
 export interface Config {
     /** Absolute path or executable name for the Kiro CLI. */
@@ -23,8 +34,8 @@ export interface Config {
     defaultEffort?: KiroReasoningEffort;
 }
 export declare const Config: z<Config>;
-/** Register the Kiro adapter. Authentication remains in the local Kiro CLI or environment. */
-export declare function apply(ctx: Context, config: Config): void;
+/** Register the Kiro adapter and its loopback-only Kiro CLI authentication bridge. */
+export declare function apply(ctx: KiroHostContext, config: Config): void;
 export { KiroAdapter } from './adapter.js';
 export { KiroAcpClient } from './acp.js';
 export { parseKiroModels } from './models.js';

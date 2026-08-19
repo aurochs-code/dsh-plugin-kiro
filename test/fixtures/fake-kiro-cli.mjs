@@ -4,6 +4,13 @@ import { appendFileSync } from 'node:fs'
 
 const args = process.argv.slice(2)
 
+if (args[0] === 'login') {
+  if (process.env.FAKE_KIRO_LOGIN_LOG !== undefined) appendFileSync(process.env.FAKE_KIRO_LOGIN_LOG, `${args.join(' ')}\n`)
+  process.stdout.write('Open https://auth.example.test/device and enter device code ABCD-EFGH.\n')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  process.exit(0)
+}
+
 if (args[0] === 'whoami') {
   process.stdout.write(`${JSON.stringify({ authentication: 'IAM Identity Center', user: 'test@example.com' })}\n`)
   process.exit(0)

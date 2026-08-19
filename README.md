@@ -2,7 +2,7 @@
 
 将本机已认证的 [Kiro CLI](https://kiro.dev/docs/cli/acp/) 作为 DeepSeek Harness（DSH）的 `kiro` LLM provider 使用。插件只使用 Kiro 官方的 Agent Client Protocol（ACP）；不复制企业 SSO 凭据，也不调用未公开的 Kiro HTTP 接口。
 
-> 当前为 0.3.0 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择、Web 配置卡、ACP 会话复用，以及由 DSH 执行与授权的文件和终端调用。
+> 当前为 0.4.0 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择、Web 配置卡、企业设备码登录、ACP 会话复用，以及由 DSH 执行与授权的文件和终端调用。
 
 ## 适用场景
 
@@ -13,10 +13,10 @@
 
 ## 安装
 
-先安装并认证 Kiro CLI：
+先安装 Kiro CLI。可在终端完成企业认证：
 
 ```sh
-kiro-cli login
+kiro-cli login --use-device-flow --license pro
 kiro-cli whoami --format json
 ```
 
@@ -73,6 +73,10 @@ export KIRO_API_KEY='…'
 - 默认推理强度；
 - 已覆盖的字段可单独重置回 profile 配置。
 
+卡片还会显示当前 Kiro CLI 的登录状态与非敏感账户标识。点击 **企业 SSO 登录** 后，插件只会在 DSH 主机上启动固定的官方命令 `kiro-cli login --use-device-flow --license pro`，并显示该命令输出的设备码和 HTTPS 登录链接。完成 SSO 后刷新状态即可；插件不会读取、传输或保存 IAM Identity Center、Okta、Entra ID 的 cookie、token 或密码。
+
+该登录操作遵循 DSH 的 `loopback` 权限边界：只有在运行 DSH 的本机 Web 页面可执行。通过远程地址访问 DSH 时，配置页会明确提示改在 DSH 主机终端执行上述命令，避免远程浏览器触发本机认证流程。
+
 保存后配置会应用到新的请求；对话中手动选择的推理强度优先于默认值。一个 DSH 对话会复用对应的 `kiro-cli acp --effort <level>` 进程和 Kiro ACP session，配置、工作目录、推理强度变更或会话故障时会重新创建。
 
 ### Kiro 额度
@@ -82,6 +86,7 @@ Kiro CLI 的交互式 `/usage` 会显示用量/订阅入口，但当前公开的
 ## 安全与边界
 
 - 插件不保存 Kiro API Key、IAM Identity Center token 或外部 IdP token。
+- 配置页的登录 RPC 只接受空请求体且仅暴露状态、固定设备码登录、取消登录三个操作；浏览器不能传入 CLI 命令、参数、链接或凭据。该 RPC 在插件卸载时随 DSH effect 一起注销。
 - 对一个活动 DSH 对话，ACP client 会声明标准的文件读取、文件写入和终端能力；它们分别只会调用 DSH 的 `read`、`write`、`bash` 工具运行时，并携带原 DSH agent 与取消信号。因此审批、沙箱、文件观察策略与审计仍以 DSH 的权限策略为准，而不是由 Kiro CLI 绕过执行。
 - Kiro 以 `session/request_permission` 发出的通用内部权限请求会被拒绝；这类批准不能可靠地拦住其后的 CLI 操作。终端环境变量覆盖也会被拒绝。两者均为失败关闭，避免出现“看似经 DSH 批准、实际绕过 DSH”的路径。
 - 同一个 DSH session 会复用本地 ACP 子进程与 Kiro ACP session，并只传递自上一轮以来新增的结构化历史，避免每轮重启、初始化和完整历史重放。空闲 30 分钟、配置变更、工作目录/推理强度变更或传输错误会清理该 session；历史不连续时会安全地用完整历史重新创建。
@@ -95,7 +100,7 @@ pnpm install
 pnpm check
 ```
 
-测试使用本地模拟 Kiro CLI，覆盖 ACP 初始化、模型选择、流式响应、ACP 参数兼容、文件回调、会话复用、DSH 工具授权桥、推理强度透传、模型目录缓存/并发合并、DSH 流转换和图片拒绝行为。发布前仍建议使用一个管理员批准的企业测试账户做端到端验证。
+测试使用本地模拟 Kiro CLI，覆盖 ACP 初始化、模型选择、流式响应、ACP 参数兼容、文件回调、会话复用、DSH 工具授权桥、推理强度透传、模型目录缓存/并发合并、设备码登录边界、DSH 流转换和图片拒绝行为。发布前仍建议使用一个管理员批准的企业测试账户做端到端验证。
 
 ## License
 

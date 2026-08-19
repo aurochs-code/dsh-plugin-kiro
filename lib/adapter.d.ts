@@ -44,6 +44,8 @@ export declare class KiroAdapter extends LlmAdapter {
     setConfig(config: KiroAdapterConfig): void;
     /** Stop every retained ACP process. Called when the plugin reloads or its runtime changes. */
     close(): void;
+    /** Forget the current user's model list after a completed Kiro sign-in. */
+    invalidateModelCatalog(): void;
     stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
     private pruneSessions;
     private dropSession;
