@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createAssistantMessage, createUserMessage, LlmError } from '@deepseek-ai/dsh-llm'
 import type { Message } from '@deepseek-ai/dsh-llm'
-import { toKiroPrompt } from '../src/messages.js'
+import { toKiroContinuationPrompt, toKiroConversation, toKiroPrompt } from '../src/messages.js'
 
 test('serializes DSH history as structured data for one ACP prompt', () => {
   const prompt = toKiroPrompt({
@@ -51,4 +51,50 @@ test('rejects image input instead of silently dropping it', () => {
     () => toKiroPrompt({ messages: [imageMessage] }),
     (error: unknown) => error instanceof LlmError && error.code === 'UNSUPPORTED',
   )
+})
+
+test('serializes only the new DSH messages for a live ACP continuation', () => {
+  const first = createUserMessage({
+    content: [{ type: 'text', text: 'First request' }],
+    source: { kind: 'user' },
+  })
+  const prior = toKiroConversation({ messages: [first] })
+  const current = toKiroConversation({
+    messages: [
+      first,
+      createAssistantMessage({
+        content: [{ type: 'text', text: 'Hello Kiro' }],
+        source: { provider: 'kiro', model: 'kiro-test' },
+      }),
+      createUserMessage({
+        content: [{ type: 'text', text: 'Second request' }],
+        source: { kind: 'user' },
+      }),
+    ],
+  })
+  const prompt = toKiroContinuationPrompt(current, prior, 'Hello Kiro')
+  assert.ok(prompt !== undefined)
+  assert.match(prompt, /New conversation JSON/)
+  assert.match(prompt, /Second request/)
+  assert.doesNotMatch(prompt, /Hello Kiro/)
+})
+
+test('reseeds when DSH history diverges from the retained ACP response', () => {
+  const first = createUserMessage({
+    content: [{ type: 'text', text: 'First request' }],
+    source: { kind: 'user' },
+  })
+  const prior = toKiroConversation({
+    messages: [first],
+  })
+  const current = toKiroConversation({
+    messages: [
+      first,
+      createAssistantMessage({
+        content: [{ type: 'text', text: 'Edited answer' }],
+        source: { provider: 'kiro', model: 'kiro-test' },
+      }),
+    ],
+  })
+  assert.equal(toKiroContinuationPrompt(current, prior, 'Hello Kiro'), undefined)
 })

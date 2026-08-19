@@ -29,9 +29,11 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>
 }
 
+type JsonRpcId = string | number | null
+
 interface JsonRpcResponse {
   jsonrpc?: string
-  id?: number
+  id?: JsonRpcId
   result?: unknown
   error?: { code?: number; message?: string; data?: unknown }
   method?: string
@@ -99,6 +101,83 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function requiredString(params: Record<string, unknown>, name: string, allowEmpty = false): string {
+  const value = params[name]
+  if (typeof value !== 'string' || (!allowEmpty && value.length === 0)) {
+    throw new KiroCliError(`Kiro ACP ${name} must be a non-empty string`)
+  }
+  return value
+}
+
+function optionalInteger(params: Record<string, unknown>, name: string): number | undefined {
+  const value = params[name]
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new KiroCliError(`Kiro ACP ${name} must be a non-negative integer`)
+  }
+  return value
+}
+
+function optionalStringArray(params: Record<string, unknown>, name: string): readonly string[] | undefined {
+  const value = params[name]
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
+    throw new KiroCliError(`Kiro ACP ${name} must be an array of strings`)
+  }
+  return value
+}
+
+function optionalEnvironment(params: Record<string, unknown>): readonly KiroAcpEnvironmentVariable[] | undefined {
+  const value = params.env
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) throw new KiroCliError('Kiro ACP env must be an array')
+  return value.map((item) => {
+    if (!isRecord(item)) throw new KiroCliError('Kiro ACP env entries must be objects')
+    return { name: requiredString(item, 'name'), value: requiredString(item, 'value', true) }
+  })
+}
+
+function readTextFileRequest(params: Record<string, unknown>): KiroAcpReadTextFileRequest {
+  const line = optionalInteger(params, 'line')
+  const limit = optionalInteger(params, 'limit')
+  return {
+    sessionId: requiredString(params, 'sessionId'),
+    path: requiredString(params, 'path'),
+    ...(line === undefined ? {} : { line }),
+    ...(limit === undefined ? {} : { limit }),
+  }
+}
+
+function writeTextFileRequest(params: Record<string, unknown>): KiroAcpWriteTextFileRequest {
+  return {
+    sessionId: requiredString(params, 'sessionId'),
+    path: requiredString(params, 'path'),
+    content: requiredString(params, 'content', true),
+  }
+}
+
+function createTerminalRequest(params: Record<string, unknown>): KiroAcpCreateTerminalRequest {
+  const args = optionalStringArray(params, 'args')
+  const env = optionalEnvironment(params)
+  const cwd = params.cwd === undefined || params.cwd === null ? undefined : requiredString(params, 'cwd')
+  const outputByteLimit = optionalInteger(params, 'outputByteLimit')
+  return {
+    sessionId: requiredString(params, 'sessionId'),
+    command: requiredString(params, 'command'),
+    ...(args === undefined ? {} : { args }),
+    ...(env === undefined ? {} : { env }),
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(outputByteLimit === undefined ? {} : { outputByteLimit }),
+  }
+}
+
+function terminalExitStatus(terminal: KiroAcpTerminal): Record<string, string | number> {
+  return {
+    ...(terminal.exitCode === null ? {} : { exitCode: terminal.exitCode }),
+    ...(terminal.signal === null ? {} : { signal: terminal.signal }),
+  }
+}
+
 function abortError(): Error {
   return new Error('Kiro request was aborted')
 }
@@ -119,18 +198,64 @@ export interface KiroAcpClientOptions {
   args?: readonly string[]
   cwd: string
   env?: NodeJS.ProcessEnv
+  handlers?: KiroAcpClientHandlers
 }
 
-/**
- * Minimal ACP client for Kiro CLI. It intentionally advertises no file-system
- * or terminal capabilities: DSH owns tool execution, while this adapter only
- * accepts text model output.
- */
+/** One file-read request issued by Kiro through the ACP client boundary. */
+export interface KiroAcpReadTextFileRequest {
+  sessionId: string
+  path: string
+  line?: number
+  limit?: number
+}
+
+/** One file-write request issued by Kiro through the ACP client boundary. */
+export interface KiroAcpWriteTextFileRequest {
+  sessionId: string
+  path: string
+  content: string
+}
+
+/** Environment variable supplied with an ACP terminal request. */
+export interface KiroAcpEnvironmentVariable {
+  name: string
+  value: string
+}
+
+/** One terminal request issued by Kiro through the ACP client boundary. */
+export interface KiroAcpCreateTerminalRequest {
+  sessionId: string
+  command: string
+  args?: readonly string[]
+  env?: readonly KiroAcpEnvironmentVariable[]
+  cwd?: string
+  outputByteLimit?: number
+}
+
+/** Completed DSH-backed terminal state retained for ACP terminal follow-ups. */
+export interface KiroAcpTerminal {
+  output: string
+  truncated: boolean
+  exitCode: number | null
+  signal: string | null
+}
+
+/** Optional DSH-mediated capabilities exposed to one Kiro ACP session. */
+export interface KiroAcpClientHandlers {
+  readTextFile?(request: KiroAcpReadTextFileRequest, signal?: AbortSignal): Promise<string>
+  writeTextFile?(request: KiroAcpWriteTextFileRequest, signal?: AbortSignal): Promise<void>
+  createTerminal?(request: KiroAcpCreateTerminalRequest, signal?: AbortSignal): Promise<KiroAcpTerminal>
+}
+
+/** Minimal ACP client for Kiro CLI with optional DSH-mediated tool callbacks. */
 export class KiroAcpClient {
   private readonly pending = new Map<number, Deferred<unknown>>()
   private readonly prompts = new Map<string, AsyncQueue<string>>()
+  private readonly promptSignals = new Map<string, AbortSignal | undefined>()
+  private readonly terminals = new Map<string, KiroAcpTerminal>()
   private readonly process: ChildProcessWithoutNullStreams
   private nextId = 1
+  private nextTerminalId = 1
   private exited = false
   private stderr = ''
 
@@ -159,11 +284,25 @@ export class KiroAcpClient {
     lines.on('line', (line) => this.receive(line))
   }
 
+  get isRunning(): boolean {
+    return !this.exited
+  }
+
   async initialize(signal?: AbortSignal): Promise<void> {
+    const handlers = this.options.handlers
+    const fs = handlers?.readTextFile === undefined && handlers?.writeTextFile === undefined
+      ? undefined
+      : {
+          ...(handlers?.readTextFile === undefined ? {} : { readTextFile: true }),
+          ...(handlers?.writeTextFile === undefined ? {} : { writeTextFile: true }),
+        }
     await this.request('initialize', {
       protocolVersion: 1,
-      clientCapabilities: {},
-      clientInfo: { name: 'dsh-plugin-kiro', version: '0.2.3' },
+      clientCapabilities: {
+        ...(fs === undefined ? {} : { fs }),
+        ...(handlers?.createTerminal === undefined ? {} : { terminal: true }),
+      },
+      clientInfo: { name: 'dsh-plugin-kiro', version: '0.3.0' },
     }, signal)
   }
 
@@ -184,6 +323,7 @@ export class KiroAcpClient {
     if (this.prompts.has(sessionId)) throw new KiroCliError(`Kiro ACP session ${sessionId} already has an active prompt`)
     const queue = new AsyncQueue<string>()
     this.prompts.set(sessionId, queue)
+    this.promptSignals.set(sessionId, signal)
     let finished = false
     const complete = async (): Promise<void> => {
       try {
@@ -207,11 +347,14 @@ export class KiroAcpClient {
       for await (const chunk of queue) yield chunk
     } finally {
       this.prompts.delete(sessionId)
+      this.promptSignals.delete(sessionId)
       if (!finished) this.notify('session/cancel', { sessionId })
     }
   }
 
   close(): void {
+    this.terminals.clear()
+    this.promptSignals.clear()
     if (!this.exited) this.process.kill()
   }
 
@@ -259,6 +402,14 @@ export class KiroAcpClient {
       this.failAll(new KiroCliError(`Kiro ACP emitted malformed JSON: ${line.slice(0, 160)}`))
       return
     }
+    if (message.method !== undefined) {
+      if (message.id !== undefined) {
+        void this.handleClientRequest(message.id, message.method, message.params ?? {})
+        return
+      }
+      this.receiveNotification(message.method, message.params)
+      return
+    }
     if (typeof message.id === 'number') {
       const deferred = this.pending.get(message.id)
       if (deferred === undefined) return
@@ -271,27 +422,104 @@ export class KiroAcpClient {
       }
       return
     }
-    if (message.method !== 'session/update' && message.method !== 'session/notification') {
-      if (message.id !== undefined) this.replyUnsupported(message.id)
-      return
-    }
-    const params = message.params
+  }
+
+  private receiveNotification(method: string, params: Record<string, unknown> | undefined): void {
+    if (method !== 'session/update' && method !== 'session/notification') return
     if (params === undefined || typeof params.sessionId !== 'string') return
     const queue = this.prompts.get(params.sessionId)
     if (queue === undefined) return
     const text = promptTextFromUpdate(params)
     if (text !== undefined) queue.push(text)
-    // Kiro reports ToolCall and ToolCallUpdate as ACP status notifications.
-    // They describe work performed by the Kiro agent, not a request for this
-    // client to execute a DeepSeek Harness tool, so final text may still follow.
+    // Kiro reports ToolCall and ToolCallUpdate as status notifications. Actual
+    // DSH-mediated file or terminal work arrives as an ACP client request and
+    // is handled separately in receive() before this notification path.
   }
 
-  private replyUnsupported(id: number): void {
+  private async handleClientRequest(id: JsonRpcId, method: string, params: Record<string, unknown>): Promise<void> {
+    try {
+      const handlers = this.options.handlers
+      if (method === 'fs/read_text_file') {
+        if (handlers?.readTextFile === undefined) return this.replyUnsupported(id)
+        const request = readTextFileRequest(params)
+        const content = await handlers.readTextFile(request, this.promptSignals.get(request.sessionId))
+        this.replyResult(id, { content })
+        return
+      }
+      if (method === 'fs/write_text_file') {
+        if (handlers?.writeTextFile === undefined) return this.replyUnsupported(id)
+        const request = writeTextFileRequest(params)
+        await handlers.writeTextFile(request, this.promptSignals.get(request.sessionId))
+        this.replyResult(id, {})
+        return
+      }
+      if (method === 'terminal/create') {
+        if (handlers?.createTerminal === undefined) return this.replyUnsupported(id)
+        const request = createTerminalRequest(params)
+        const terminal = await handlers.createTerminal(request, this.promptSignals.get(request.sessionId))
+        const terminalId = `dsh-terminal-${this.nextTerminalId++}`
+        this.terminals.set(terminalId, terminal)
+        this.replyResult(id, { terminalId })
+        return
+      }
+      if (method === 'terminal/output') {
+        const terminal = this.terminal(params)
+        this.replyResult(id, {
+          output: terminal.output,
+          truncated: terminal.truncated,
+          ...(terminal.exitCode === null && terminal.signal === null ? {} : { exitStatus: terminalExitStatus(terminal) }),
+        })
+        return
+      }
+      if (method === 'terminal/wait_for_exit') {
+        this.replyResult(id, { exitStatus: terminalExitStatus(this.terminal(params)) })
+        return
+      }
+      if (method === 'terminal/kill') {
+        this.terminal(params)
+        this.replyResult(id, {})
+        return
+      }
+      if (method === 'terminal/release') {
+        this.terminals.delete(requiredString(params, 'terminalId'))
+        this.replyResult(id, {})
+        return
+      }
+      if (method === 'session/request_permission') {
+        this.replyError(id, -32601, 'Kiro permission requests must use DSH-mediated file or terminal capabilities')
+        return
+      }
+      this.replyUnsupported(id)
+    } catch (error) {
+      this.replyError(id, -32000, error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  private terminal(params: Record<string, unknown>): KiroAcpTerminal {
+    const terminalId = requiredString(params, 'terminalId')
+    const terminal = this.terminals.get(terminalId)
+    if (terminal === undefined) throw new KiroCliError(`unknown ACP terminal ${terminalId}`)
+    return terminal
+  }
+
+  private replyResult(id: JsonRpcId, result: unknown): void {
+    try {
+      this.process.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`)
+    } catch {
+      // The child-process error path owns the user-facing diagnostic.
+    }
+  }
+
+  private replyUnsupported(id: JsonRpcId): void {
+    this.replyError(id, -32601, 'dsh-plugin-kiro does not expose this ACP client capability')
+  }
+
+  private replyError(id: JsonRpcId, code: number, message: string): void {
     try {
       this.process.stdin.write(`${JSON.stringify({
         jsonrpc: '2.0',
         id,
-        error: { code: -32601, message: 'dsh-plugin-kiro exposes no client-side tools' },
+        error: { code, message },
       })}\n`)
     } catch {
       // The child-process error path owns the user-facing diagnostic.

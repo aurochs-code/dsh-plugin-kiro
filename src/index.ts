@@ -5,15 +5,18 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 import { KiroAdapter } from './adapter.js'
+import { createDshToolHandlers } from './dsh-bridge.js'
 import type { KiroAdapterConfig, KiroModelEntry } from './adapter.js'
 import type { KiroReasoningEffort } from './effort.js'
 
 export const name = 'dsh-plugin-kiro'
-export const inject = ['llm', 'sessions']
+export const inject = ['llm', 'sessions', 'agents', 'tools']
 const settingsNamespaceId = settingsNamespace('kiro')
 
 /** Plugin configuration. Secrets are always supplied through the environment, never this object. */
@@ -77,7 +80,9 @@ export function apply(ctx: Context, config: Config): void {
     ...adapterConfig(base),
     onWarn: message => ctx.logger.warn(`${name}: ${message}`),
     resolveSessionCwd: sessionId => sessionId === undefined ? undefined : ctx.sessions.get(sessionId)?.header.cwd,
+    resolveToolHandlers: sessionId => createDshToolHandlers(ctx, sessionId),
   })
+  ctx.effect(() => () => adapter.close(), 'Kiro ACP sessions')
   const registration = ctx.llm.registerAdapter(['kiro'], adapter)
   installSettingsSection(ctx, settingsNamespaceId, Config, base, {
     setSource(next) {
