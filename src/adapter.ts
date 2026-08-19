@@ -26,7 +26,11 @@ export interface KiroModelEntry {
 }
 
 /** Live Kiro ACP settings consumed by {@link KiroAdapter}. */
-export interface KiroAdapterConfig extends KiroCliOptions {
+export interface KiroAdapterConfig {
+  command: string
+  /** Optional fixed ACP directory. Without it, each DSH session supplies its own cwd. */
+  cwd?: string
+  apiKeyEnv: string
   models: readonly KiroModelEntry[]
   defaultEffort?: KiroReasoningEffort
 }
@@ -34,6 +38,7 @@ export interface KiroAdapterConfig extends KiroCliOptions {
 /** Constructor dependencies for {@link KiroAdapter}. */
 export interface KiroAdapterOptions extends KiroAdapterConfig {
   onWarn?: (message: string) => void
+  resolveSessionCwd?: (sessionId: GenerateOptions['sessionId']) => string | undefined
 }
 
 function modelInfo(provider: string, model: KiroModel): LlmModelInfo {
@@ -61,6 +66,7 @@ function errorMessage(error: unknown): string {
 /** Kiro ACP adapter registered under the `kiro` DSH provider route. */
 export class KiroAdapter extends LlmAdapter {
   private command!: KiroCliOptions
+  private configuredCwd: string | undefined
   private configuredModels: KiroModel[] = []
   private defaultEffort: KiroReasoningEffort | undefined
   private catalogSignature = ''
@@ -99,15 +105,19 @@ export class KiroAdapter extends LlmAdapter {
 
   /** Apply live ACP settings and invalidate the catalog only when it can change. */
   setConfig(config: KiroAdapterConfig): void {
+    const configuredCwd = config.cwd === undefined || config.cwd.trim().length === 0
+      ? undefined
+      : resolve(config.cwd)
     const command = {
       command: config.command,
-      cwd: resolve(config.cwd),
+      cwd: configuredCwd ?? process.cwd(),
       apiKeyEnv: config.apiKeyEnv,
     }
     const configuredModels = config.models.map(asKiroModel)
     const catalogSignature = JSON.stringify({ command, configuredModels })
     const catalogChanged = catalogSignature !== this.catalogSignature
     this.command = command
+    this.configuredCwd = configuredCwd
     this.configuredModels = configuredModels
     this.defaultEffort = config.defaultEffort
     if (!catalogChanged) return
@@ -119,15 +129,17 @@ export class KiroAdapter extends LlmAdapter {
 
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const command = this.command
+    const cwd = this.configuredCwd ?? this.options.resolveSessionCwd?.(options.sessionId) ?? command.cwd
+    const requestCommand = cwd === command.cwd ? command : { ...command, cwd }
     const effort = options.reasoningEffort === undefined ? this.defaultEffort : String(options.reasoningEffort)
     const client = new KiroAcpClient({
-      command: command.command,
+      command: requestCommand.command,
       args: effort === undefined ? ['acp'] : ['acp', '--effort', effort],
-      cwd: command.cwd,
-      env: kiroEnvironment(command.apiKeyEnv),
+      cwd,
+      env: kiroEnvironment(requestCommand.apiKeyEnv),
     })
     try {
-      if (!await isKiroAuthenticated(command, options.signal)) {
+      if (!await isKiroAuthenticated(requestCommand, options.signal)) {
         throw new LlmError(
           'Kiro is not authenticated. Run `kiro-cli login`, or set the configured API-key environment variable after your Kiro administrator enables API keys.',
           'MISSING_CREDENTIAL',
@@ -135,7 +147,7 @@ export class KiroAdapter extends LlmAdapter {
       }
       const prompt = toKiroPrompt(options)
       await client.initialize(options.signal)
-      const sessionId = await client.newSession(command.cwd, options.signal)
+      const sessionId = await client.newSession(cwd, options.signal)
       await client.setModel(sessionId, options.model, options.signal)
       let text = ''
       let started = false

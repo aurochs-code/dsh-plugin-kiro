@@ -6,7 +6,7 @@ export declare const en: {
     readonly command: "Kiro CLI command";
     readonly commandHint: "Executable name or absolute path. The default is kiro-cli.";
     readonly cwd: "ACP workspace";
-    readonly cwdHint: "Working directory passed to every new Kiro ACP session.";
+    readonly cwdHint: "Leave blank to use the current DSH session workspace; set a path to override it.";
     readonly apiKeyEnv: "API key environment variable";
     readonly apiKeyEnvHint: "Only the variable name is stored. Its value remains in the DSH process environment.";
     readonly defaultEffort: "Default reasoning effort";

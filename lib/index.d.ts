@@ -13,7 +13,7 @@ export declare const inject: string[];
 export interface Config {
     /** Absolute path or executable name for the Kiro CLI. */
     command?: string;
-    /** Directory Kiro receives when it creates each ACP session. */
+    /** Optional fixed directory Kiro receives when it creates each ACP session. */
     cwd?: string;
     /** Optional environment variable holding a Kiro API key; defaults to Kiro's documented name. */
     apiKeyEnv?: string;

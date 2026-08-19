@@ -20,6 +20,7 @@ if (args[0] === 'chat' && args.includes('--list-models')) {
 if (args[0] !== 'acp') process.exit(2)
 
 if (process.env.FAKE_ACP_ARGS_LOG !== undefined) appendFileSync(process.env.FAKE_ACP_ARGS_LOG, `${args.join(' ')}\n`)
+if (process.env.FAKE_ACP_CWD_LOG !== undefined) appendFileSync(process.env.FAKE_ACP_CWD_LOG, `${process.cwd()}\n`)
 
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)
 const requirePromptField = process.env.FAKE_ACP_REQUIRES_PROMPT === '1'
