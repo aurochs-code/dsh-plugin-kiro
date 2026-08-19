@@ -48,6 +48,24 @@ input.on('line', (line) => {
       send({ jsonrpc: '2.0', id: request.id, error: { code: -32602, message: 'Invalid params: content required' } })
       return
     }
+    if (process.env.FAKE_ACP_TOOL_UPDATE === '1') {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/notification',
+        params: {
+          sessionId: request.params.sessionId,
+          update: { sessionUpdate: 'ToolCall', toolCallId: 'fixture-tool', title: 'Read fixture', status: 'in_progress' },
+        },
+      })
+      send({
+        jsonrpc: '2.0',
+        method: 'session/notification',
+        params: {
+          sessionId: request.params.sessionId,
+          update: { sessionUpdate: 'ToolCallUpdate', toolCallId: 'fixture-tool', status: 'completed' },
+        },
+      })
+    }
     send({
       jsonrpc: '2.0',
       method: 'session/update',
