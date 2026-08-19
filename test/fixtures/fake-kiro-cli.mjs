@@ -25,10 +25,65 @@ if (process.env.FAKE_ACP_CWD_LOG !== undefined) appendFileSync(process.env.FAKE_
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)
 const requirePromptField = process.env.FAKE_ACP_REQUIRES_PROMPT === '1'
 const requireContentField = process.env.FAKE_ACP_REQUIRES_CONTENT === '1'
+let pendingClientRequest
+
+const finishPrompt = (request) => {
+  if (process.env.FAKE_ACP_TOOL_UPDATE === '1') {
+    send({
+      jsonrpc: '2.0',
+      method: 'session/notification',
+      params: {
+        sessionId: request.params.sessionId,
+        update: { sessionUpdate: 'ToolCall', toolCallId: 'fixture-tool', title: 'Read fixture', status: 'in_progress' },
+      },
+    })
+    send({
+      jsonrpc: '2.0',
+      method: 'session/notification',
+      params: {
+        sessionId: request.params.sessionId,
+        update: { sessionUpdate: 'ToolCallUpdate', toolCallId: 'fixture-tool', status: 'completed' },
+      },
+    })
+  }
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId: request.params.sessionId,
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello ' } },
+    },
+  })
+  send({
+    jsonrpc: '2.0',
+    method: 'session/notification',
+    params: {
+      sessionId: request.params.sessionId,
+      update: { sessionUpdate: 'AgentMessageChunk', content: { type: 'text', text: 'Kiro' } },
+    },
+  })
+  send({ jsonrpc: '2.0', id: request.id, result: { stopReason: 'end_turn' } })
+}
+
 const input = createInterface({ input: process.stdin })
 input.on('line', (line) => {
   const request = JSON.parse(line)
+  if (pendingClientRequest !== undefined && request.id === pendingClientRequest.id && request.method === undefined) {
+    if (process.env.FAKE_ACP_CLIENT_RESULT_LOG !== undefined) {
+      appendFileSync(process.env.FAKE_ACP_CLIENT_RESULT_LOG, `${JSON.stringify(request)}\n`)
+    }
+    const prompt = pendingClientRequest
+    pendingClientRequest = undefined
+    finishPrompt(prompt)
+    return
+  }
+  if (process.env.FAKE_ACP_RPC_LOG !== undefined && typeof request.method === 'string') {
+    appendFileSync(process.env.FAKE_ACP_RPC_LOG, `${JSON.stringify({ method: request.method, params: request.params })}\n`)
+  }
   if (request.method === 'initialize') {
+    if (process.env.FAKE_ACP_CAPABILITIES_LOG !== undefined) {
+      appendFileSync(process.env.FAKE_ACP_CAPABILITIES_LOG, `${JSON.stringify(request.params.clientCapabilities)}\n`)
+    }
     send({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: 1 } })
     return
   }
@@ -49,40 +104,19 @@ input.on('line', (line) => {
       send({ jsonrpc: '2.0', id: request.id, error: { code: -32602, message: 'Invalid params: content required' } })
       return
     }
-    if (process.env.FAKE_ACP_TOOL_UPDATE === '1') {
-      send({
-        jsonrpc: '2.0',
-        method: 'session/notification',
-        params: {
-          sessionId: request.params.sessionId,
-          update: { sessionUpdate: 'ToolCall', toolCallId: 'fixture-tool', title: 'Read fixture', status: 'in_progress' },
-        },
-      })
-      send({
-        jsonrpc: '2.0',
-        method: 'session/notification',
-        params: {
-          sessionId: request.params.sessionId,
-          update: { sessionUpdate: 'ToolCallUpdate', toolCallId: 'fixture-tool', status: 'completed' },
-        },
-      })
+    if (process.env.FAKE_ACP_PROMPT_LOG !== undefined) {
+      appendFileSync(process.env.FAKE_ACP_PROMPT_LOG, `${JSON.stringify(request.params.prompt ?? request.params.content)}\n`)
     }
-    send({
-      jsonrpc: '2.0',
-      method: 'session/update',
-      params: {
-        sessionId: request.params.sessionId,
-        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello ' } },
-      },
-    })
-    send({
-      jsonrpc: '2.0',
-      method: 'session/notification',
-      params: {
-        sessionId: request.params.sessionId,
-        update: { sessionUpdate: 'AgentMessageChunk', content: { type: 'text', text: 'Kiro' } },
-      },
-    })
-    send({ jsonrpc: '2.0', id: request.id, result: { stopReason: 'end_turn' } })
+    if (process.env.FAKE_ACP_CLIENT_READ === '1') {
+      pendingClientRequest = request
+      send({
+        jsonrpc: '2.0',
+        id: request.id,
+        method: 'fs/read_text_file',
+        params: { sessionId: request.params.sessionId, path: '/workspace/fixture.txt', line: 1, limit: 2 },
+      })
+      return
+    }
+    finishPrompt(request)
   }
 })

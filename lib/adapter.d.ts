@@ -1,5 +1,6 @@
 import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm';
+import type { KiroAcpClientHandlers } from './acp.js';
 import type { KiroReasoningEffort } from './effort.js';
 /** A static catalog entry for environments where discovery is intentionally disabled. */
 export interface KiroModelEntry {
@@ -20,6 +21,7 @@ export interface KiroAdapterConfig {
 export interface KiroAdapterOptions extends KiroAdapterConfig {
     onWarn?: (message: string) => void;
     resolveSessionCwd?: (sessionId: GenerateOptions['sessionId']) => string | undefined;
+    resolveToolHandlers?: (sessionId: GenerateOptions['sessionId']) => KiroAcpClientHandlers | undefined;
 }
 /** Kiro ACP adapter registered under the `kiro` DSH provider route. */
 export declare class KiroAdapter extends LlmAdapter {
@@ -29,16 +31,22 @@ export declare class KiroAdapter extends LlmAdapter {
     private configuredModels;
     private defaultEffort;
     private catalogSignature;
+    private runtimeSignature;
     private discovered;
     private modelCache;
     private modelDiscovery;
+    private readonly sessions;
     constructor(options: KiroAdapterOptions);
     providerInfo(provider: string): LlmProviderInfo;
     listModels(provider: string): Promise<readonly LlmModelInfo[]>;
     resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;
     /** Apply live ACP settings and invalidate the catalog only when it can change. */
     setConfig(config: KiroAdapterConfig): void;
+    /** Stop every retained ACP process. Called when the plugin reloads or its runtime changes. */
+    close(): void;
     stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
+    private pruneSessions;
+    private dropSession;
     private remember;
     private catalog;
     private discoverModels;

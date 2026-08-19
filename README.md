@@ -2,7 +2,7 @@
 
 将本机已认证的 [Kiro CLI](https://kiro.dev/docs/cli/acp/) 作为 DeepSeek Harness（DSH）的 `kiro` LLM provider 使用。插件只使用 Kiro 官方的 Agent Client Protocol（ACP）；不复制企业 SSO 凭据，也不调用未公开的 Kiro HTTP 接口。
 
-> 当前为 0.2.3 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择和 Web 配置卡；图片、DSH 工具映射与 Kiro 会话复用尚未实现。
+> 当前为 0.3.0 版本：已支持文本、多轮 DSH 历史、模型发现、流式输出、推理强度选择、Web 配置卡、ACP 会话复用，以及由 DSH 执行与授权的文件和终端调用。
 
 ## 适用场景
 
@@ -73,7 +73,7 @@ export KIRO_API_KEY='…'
 - 默认推理强度；
 - 已覆盖的字段可单独重置回 profile 配置。
 
-保存后配置会应用到新的请求；对话中手动选择的推理强度优先于默认值。每次 ACP 请求都会以对应的 `kiro-cli acp --effort <level>` 启动。
+保存后配置会应用到新的请求；对话中手动选择的推理强度优先于默认值。一个 DSH 对话会复用对应的 `kiro-cli acp --effort <level>` 进程和 Kiro ACP session，配置、工作目录、推理强度变更或会话故障时会重新创建。
 
 ### Kiro 额度
 
@@ -82,8 +82,10 @@ Kiro CLI 的交互式 `/usage` 会显示用量/订阅入口，但当前公开的
 ## 安全与边界
 
 - 插件不保存 Kiro API Key、IAM Identity Center token 或外部 IdP token。
-- ACP client 不声明 DSH 的文件系统、终端或 MCP 能力。Kiro 发出的 `ToolCall` / `ToolCallUpdate` 是 ACP 状态通知，插件会等待最终文本；插件不会映射或代为执行 DSH 工具，Kiro 自身工具仍受其 CLI 配置和权限控制。
-- 每次 DSH 请求都会创建一个新的 Kiro ACP session，并将 DSH 会话历史作为结构化 JSON 文本传入，避免内容中的角色标签伪装成新的指令。Kiro CLI 自己的会话落盘策略仍由 Kiro 控制。
+- 对一个活动 DSH 对话，ACP client 会声明标准的文件读取、文件写入和终端能力；它们分别只会调用 DSH 的 `read`、`write`、`bash` 工具运行时，并携带原 DSH agent 与取消信号。因此审批、沙箱、文件观察策略与审计仍以 DSH 的权限策略为准，而不是由 Kiro CLI 绕过执行。
+- Kiro 以 `session/request_permission` 发出的通用内部权限请求会被拒绝；这类批准不能可靠地拦住其后的 CLI 操作。终端环境变量覆盖也会被拒绝。两者均为失败关闭，避免出现“看似经 DSH 批准、实际绕过 DSH”的路径。
+- 同一个 DSH session 会复用本地 ACP 子进程与 Kiro ACP session，并只传递自上一轮以来新增的结构化历史，避免每轮重启、初始化和完整历史重放。空闲 30 分钟、配置变更、工作目录/推理强度变更或传输错误会清理该 session；历史不连续时会安全地用完整历史重新创建。
+- Kiro 的 `ToolCall` / `ToolCallUpdate` 仍是状态通知；真正需要客户端执行的 ACP 文件/终端请求才会进入上述 DSH 工具通道。DSH 的其他工具和 MCP 不会被自动暴露给 Kiro。
 - 当前仅支持文本输入和文本输出。带图片的请求会明确报 `UNSUPPORTED`，不会静默丢弃。
 
 ## 开发与验证
@@ -93,7 +95,7 @@ pnpm install
 pnpm check
 ```
 
-测试使用本地模拟 Kiro CLI，覆盖 ACP 初始化、模型选择、流式响应、ACP 参数兼容、推理强度透传、模型目录缓存/并发合并、DSH 流转换和图片拒绝行为。发布前仍建议使用一个管理员批准的企业测试账户做端到端验证。
+测试使用本地模拟 Kiro CLI，覆盖 ACP 初始化、模型选择、流式响应、ACP 参数兼容、文件回调、会话复用、DSH 工具授权桥、推理强度透传、模型目录缓存/并发合并、DSH 流转换和图片拒绝行为。发布前仍建议使用一个管理员批准的企业测试账户做端到端验证。
 
 ## License
 

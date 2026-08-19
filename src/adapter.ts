@@ -10,13 +10,17 @@ import type {
 import { AcpRpcError, KiroAcpClient, KiroCliError } from './acp.js'
 import { isKiroAuthenticated, kiroEnvironment, listKiroModels } from './cli.js'
 import { KIRO_REASONING_EFFORTS } from './effort.js'
-import { toKiroPrompt } from './messages.js'
+import { toKiroContinuationPrompt, toKiroConversation, toKiroPrompt } from './messages.js'
 import type { KiroCliOptions } from './cli.js'
+import type { KiroAcpClientHandlers } from './acp.js'
 import type { KiroReasoningEffort } from './effort.js'
+import type { KiroConversation } from './messages.js'
 import type { KiroModel } from './models.js'
 
 const DEFAULT_CONTEXT_WINDOW = 128_000
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1_000
+const SESSION_CACHE_TTL_MS = 30 * 60 * 1_000
+const SESSION_CACHE_LIMIT = 12
 
 /** A static catalog entry for environments where discovery is intentionally disabled. */
 export interface KiroModelEntry {
@@ -39,6 +43,18 @@ export interface KiroAdapterConfig {
 export interface KiroAdapterOptions extends KiroAdapterConfig {
   onWarn?: (message: string) => void
   resolveSessionCwd?: (sessionId: GenerateOptions['sessionId']) => string | undefined
+  resolveToolHandlers?: (sessionId: GenerateOptions['sessionId']) => KiroAcpClientHandlers | undefined
+}
+
+interface KiroSession {
+  client: KiroAcpClient
+  acpSessionId: string
+  cwd: string
+  effort?: string
+  model: string
+  conversation: KiroConversation
+  response: string
+  lastUsedAt: number
 }
 
 function modelInfo(provider: string, model: KiroModel): LlmModelInfo {
@@ -70,9 +86,11 @@ export class KiroAdapter extends LlmAdapter {
   private configuredModels: KiroModel[] = []
   private defaultEffort: KiroReasoningEffort | undefined
   private catalogSignature = ''
+  private runtimeSignature = ''
   private discovered = new Map<string, KiroModel>()
   private modelCache: { expiresAt: number; models: readonly KiroModel[] } | undefined
   private modelDiscovery: Promise<readonly KiroModel[]> | undefined
+  private readonly sessions = new Map<string, KiroSession>()
 
   constructor(private readonly options: KiroAdapterOptions) {
     super()
@@ -115,11 +133,15 @@ export class KiroAdapter extends LlmAdapter {
     }
     const configuredModels = config.models.map(asKiroModel)
     const catalogSignature = JSON.stringify({ command, configuredModels })
+    const runtimeSignature = JSON.stringify({ command, defaultEffort: config.defaultEffort })
     const catalogChanged = catalogSignature !== this.catalogSignature
+    const runtimeChanged = this.runtimeSignature.length > 0 && runtimeSignature !== this.runtimeSignature
+    if (runtimeChanged) this.close()
     this.command = command
     this.configuredCwd = configuredCwd
     this.configuredModels = configuredModels
     this.defaultEffort = config.defaultEffort
+    this.runtimeSignature = runtimeSignature
     if (!catalogChanged) return
     this.catalogSignature = catalogSignature
     this.discovered = new Map()
@@ -127,31 +149,85 @@ export class KiroAdapter extends LlmAdapter {
     this.modelDiscovery = undefined
   }
 
+  /** Stop every retained ACP process. Called when the plugin reloads or its runtime changes. */
+  close(): void {
+    for (const session of this.sessions.values()) session.client.close()
+    this.sessions.clear()
+  }
+
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const command = this.command
     const cwd = this.configuredCwd ?? this.options.resolveSessionCwd?.(options.sessionId) ?? command.cwd
     const requestCommand = cwd === command.cwd ? command : { ...command, cwd }
     const effort = options.reasoningEffort === undefined ? this.defaultEffort : String(options.reasoningEffort)
-    const client = new KiroAcpClient({
-      command: requestCommand.command,
-      args: effort === undefined ? ['acp'] : ['acp', '--effort', effort],
-      cwd,
-      env: kiroEnvironment(requestCommand.apiKeyEnv),
-    })
-    try {
-      if (!await isKiroAuthenticated(requestCommand, options.signal)) {
-        throw new LlmError(
-          'Kiro is not authenticated. Run `kiro-cli login`, or set the configured API-key environment variable after your Kiro administrator enables API keys.',
-          'MISSING_CREDENTIAL',
-        )
+    const conversation = toKiroConversation(options)
+    const sessionKey = options.sessionId === undefined ? undefined : String(options.sessionId)
+    this.pruneSessions()
+
+    let retained = sessionKey === undefined ? undefined : this.sessions.get(sessionKey)
+    if (retained !== undefined && (
+      !retained.client.isRunning || retained.cwd !== cwd || retained.effort !== effort
+    )) {
+      this.dropSession(sessionKey!)
+      retained = undefined
+    }
+
+    let prompt: string | undefined
+    if (retained !== undefined) {
+      prompt = toKiroContinuationPrompt(conversation, retained.conversation, retained.response)
+      if (prompt === undefined) {
+        this.dropSession(sessionKey!)
+        retained = undefined
       }
-      const prompt = toKiroPrompt(options)
-      await client.initialize(options.signal)
-      const sessionId = await client.newSession(cwd, options.signal)
-      await client.setModel(sessionId, options.model, options.signal)
+    }
+
+    let client: KiroAcpClient | undefined
+    let acpSessionId: string | undefined
+    let completed = false
+    try {
+      if (retained === undefined) {
+        if (!await isKiroAuthenticated(requestCommand, options.signal)) {
+          throw new LlmError(
+            'Kiro is not authenticated. Run `kiro-cli login`, or set the configured API-key environment variable after your Kiro administrator enables API keys.',
+            'MISSING_CREDENTIAL',
+          )
+        }
+        const handlers = this.options.resolveToolHandlers?.(options.sessionId)
+        client = new KiroAcpClient({
+          command: requestCommand.command,
+          args: effort === undefined ? ['acp'] : ['acp', '--effort', effort],
+          cwd,
+          env: kiroEnvironment(requestCommand.apiKeyEnv),
+          ...(handlers === undefined ? {} : { handlers }),
+        })
+        prompt = toKiroPrompt(options)
+        await client.initialize(options.signal)
+        acpSessionId = await client.newSession(cwd, options.signal)
+        await client.setModel(acpSessionId, options.model, options.signal)
+        if (sessionKey !== undefined) {
+          retained = {
+            client,
+            acpSessionId,
+            cwd,
+            ...(effort === undefined ? {} : { effort }),
+            model: options.model,
+            conversation,
+            response: '',
+            lastUsedAt: Date.now(),
+          }
+          this.sessions.set(sessionKey, retained)
+        }
+      } else {
+        client = retained.client
+        acpSessionId = retained.acpSessionId
+        if (retained.model !== options.model) await client.setModel(acpSessionId, options.model, options.signal)
+      }
+      if (client === undefined || acpSessionId === undefined || prompt === undefined) {
+        throw new KiroCliError('Kiro ACP session was not initialized')
+      }
       let text = ''
       let started = false
-      for await (const chunk of client.prompt(sessionId, prompt, options.signal)) {
+      for await (const chunk of client.prompt(acpSessionId, prompt, options.signal)) {
         if (chunk.length === 0) continue
         if (!started) {
           started = true
@@ -163,13 +239,50 @@ export class KiroAdapter extends LlmAdapter {
       if (!started) {
         throw new LlmError('Kiro completed the request without text output', EMPTY_RESPONSE_CODE)
       }
+      if (retained !== undefined) {
+        retained.model = options.model
+        retained.conversation = conversation
+        retained.response = text
+        retained.lastUsedAt = Date.now()
+      }
+      completed = true
+      this.pruneSessions()
       yield { type: 'block-end', index: 0, block: { type: 'text', text } }
       yield { type: 'finish', reason: { kind: 'stop' } }
     } catch (error) {
+      if (retained !== undefined && sessionKey !== undefined && this.sessions.get(sessionKey) === retained) {
+        this.dropSession(sessionKey)
+      } else {
+        client?.close()
+      }
       throw this.toLlmError(error, options.signal)
     } finally {
-      client.close()
+      if (!completed && retained !== undefined && sessionKey !== undefined && this.sessions.get(sessionKey) === retained) {
+        this.dropSession(sessionKey)
+      }
+      if (retained === undefined) client?.close()
     }
+  }
+
+  private pruneSessions(now = Date.now()): void {
+    for (const [key, session] of this.sessions) {
+      if (!session.client.isRunning || now - session.lastUsedAt >= SESSION_CACHE_TTL_MS) this.dropSession(key)
+    }
+    while (this.sessions.size > SESSION_CACHE_LIMIT) {
+      let oldest: [string, KiroSession] | undefined
+      for (const entry of this.sessions) {
+        if (oldest === undefined || entry[1].lastUsedAt < oldest[1].lastUsedAt) oldest = entry
+      }
+      if (oldest === undefined) return
+      this.dropSession(oldest[0])
+    }
+  }
+
+  private dropSession(key: string): void {
+    const session = this.sessions.get(key)
+    if (session === undefined) return
+    this.sessions.delete(key)
+    session.client.close()
   }
 
   private remember(models: readonly KiroModel[]): void {

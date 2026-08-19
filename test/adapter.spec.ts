@@ -3,7 +3,7 @@ import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { fileURLToPath } from 'node:url'
 import { KiroAdapter } from '../src/adapter.js'
 
@@ -70,8 +70,9 @@ test('uses the DSH session workspace when ACP cwd is not configured', async () =
   const log = join(workspace, 'acp-cwd.log')
   const original = process.env.FAKE_ACP_CWD_LOG
   process.env.FAKE_ACP_CWD_LOG = log
+  let adapter: KiroAdapter | undefined
   try {
-    const adapter = new KiroAdapter({
+    adapter = new KiroAdapter({
       command: fixture,
       apiKeyEnv: 'KIRO_API_KEY',
       models: [],
@@ -91,9 +92,76 @@ test('uses the DSH session workspace when ACP cwd is not configured', async () =
     }
     assert.equal((await readFile(log, 'utf8')).trim(), await realpath(workspace))
   } finally {
+    adapter?.close()
     if (original === undefined) delete process.env.FAKE_ACP_CWD_LOG
     else process.env.FAKE_ACP_CWD_LOG = original
     await rm(workspace, { recursive: true, force: true })
+  }
+})
+
+test('reuses an ACP session and sends only new conversation data', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-plugin-kiro-'))
+  const rpcLog = join(directory, 'rpc.log')
+  const promptLog = join(directory, 'prompt.log')
+  const originalRpcLog = process.env.FAKE_ACP_RPC_LOG
+  const originalPromptLog = process.env.FAKE_ACP_PROMPT_LOG
+  process.env.FAKE_ACP_RPC_LOG = rpcLog
+  process.env.FAKE_ACP_PROMPT_LOG = promptLog
+  const adapter = new KiroAdapter({
+    command: fixture,
+    cwd: process.cwd(),
+    apiKeyEnv: 'KIRO_API_KEY',
+    models: [],
+  })
+  const first = createUserMessage({
+    content: [{ type: 'text', text: 'First request' }],
+    source: { kind: 'user' },
+  })
+  try {
+    for await (const _chunk of adapter.stream({
+      provider: 'kiro',
+      model: 'kiro-test',
+      messages: [first],
+      sessionId: 'reused-session' as never,
+    })) {
+      // Consume the first response before issuing the continuation.
+    }
+    for await (const _chunk of adapter.stream({
+      provider: 'kiro',
+      model: 'kiro-test',
+      messages: [
+        first,
+        createAssistantMessage({
+          content: [{ type: 'text', text: 'Hello Kiro' }],
+          source: { provider: 'kiro', model: 'kiro-test' },
+        }),
+        createUserMessage({
+          content: [{ type: 'text', text: 'Second request' }],
+          source: { kind: 'user' },
+        }),
+      ],
+      sessionId: 'reused-session' as never,
+    })) {
+      // Consume the continuation response.
+    }
+    const calls = (await readFile(rpcLog, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { method: string })
+    assert.equal(calls.filter(call => call.method === 'session/new').length, 1)
+    assert.equal(calls.filter(call => call.method === 'session/set_model').length, 1)
+    const prompts = (await readFile(promptLog, 'utf8')).trim().split('\n').map(line => {
+      const content = JSON.parse(line) as { type: string; text: string }[]
+      return content[0]!.text
+    })
+    assert.equal(prompts.length, 2)
+    assert.match(prompts[1]!, /New conversation JSON/)
+    assert.match(prompts[1]!, /Second request/)
+    assert.doesNotMatch(prompts[1]!, /Hello Kiro/)
+  } finally {
+    adapter.close()
+    if (originalRpcLog === undefined) delete process.env.FAKE_ACP_RPC_LOG
+    else process.env.FAKE_ACP_RPC_LOG = originalRpcLog
+    if (originalPromptLog === undefined) delete process.env.FAKE_ACP_PROMPT_LOG
+    else process.env.FAKE_ACP_PROMPT_LOG = originalPromptLog
+    await rm(directory, { recursive: true, force: true })
   }
 })
 
